@@ -1,0 +1,99 @@
+{
+  "name": "Insurance Claims Triage",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claims",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "node-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\nreturn [{\n  json: {\n    messages: [\n      {\n        role: 'system',\n        content: 'You are an insurance claims triage specialist. Analyze the claim and respond ONLY with a raw JSON object (no markdown, no backticks).\\n\\nPriority rules — follow strictly:\\n- High: life-threatening injuries, hospitalization, major fire or flood, total vehicle loss, crime in progress\\n- Medium: moderate property damage, non-urgent medical, theft, partial vehicle damage\\n- Low: minor scratches or dents, travel delays, lost items, small claims under $500\\n\\nRequired fields: priority (High/Medium/Low), required_documents (array of strings), estimated_processing_days (number: High=1, Medium=5, Low=10), summary (1-2 sentences), next_steps (string)'\n      },\n      {\n        role: 'user',\n        content: 'Analyze this insurance claim. Type: ' + (body.claim_type || 'unknown') + '. Date: ' + (body.incident_date || 'unknown') + '. Description: ' + (body.description || 'No description provided')\n      }\n    ],\n    max_tokens: 500,\n    temperature: 0.2\n  }\n}];"
+      },
+      "id": "node-2",
+      "name": "Build API Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [340, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://genai.hkbu.edu.hk/general/rest/deployments/gpt-4.1/chat/completions?api-version=2024-12-01-preview",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "19742f4a-d307-4dda-933e-3baaa050688f"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "node-3",
+      "name": "HKBU ChatGPT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [580, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.choices[0].message.content;\n\nlet result;\ntry {\n  result = JSON.parse(raw.replace(/```json|```/g, '').trim());\n} catch(e) {\n  result = {\n    priority: 'Medium',\n    required_documents: ['Proof of identity', 'Incident report'],\n    estimated_processing_days: 5,\n    summary: 'Claim received. Manual review required.',\n    next_steps: 'A claims officer will contact you within 2 business days.'\n  };\n}\n\nconst slaMap = {\n  'High': 'URGENT - Senior officer assigned. Resolution within 24 hours.',\n  'Medium': 'Standard queue. Resolution within 3-5 business days.',\n  'Low': 'Self-service queue. Please submit documents via the portal.'\n};\n\nresult.sla = slaMap[result.priority] || slaMap['Medium'];\n\nreturn [{ json: result }];"
+      },
+      "id": "node-4",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [820, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-5",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1060, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Build API Request", "type": "main", "index": 0 }]]
+    },
+    "Build API Request": {
+      "main": [[{ "node": "HKBU ChatGPT", "type": "main", "index": 0 }]]
+    },
+    "HKBU ChatGPT": {
+      "main": [[{ "node": "Parse Response", "type": "main", "index": 0 }]]
+    },
+    "Parse Response": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
